@@ -16,9 +16,11 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-access-log
 ```
 
-Before starting, set `OPENAI_API_KEY` and `OPENAI_MODEL` in your environment.
-Choose a Chat Completions model available to your account. `.env` is not loaded
-automatically. `/health` needs no credentials, but optimization requires them.
+Before starting, run `python3 -m examples.configure_keys` in your local terminal.
+It prompts for Groq and Gemini keys with hidden input and saves a git-ignored `.env`
+with owner-only permissions. The API loads this file automatically; environment
+variables take precedence. `/health` needs no credentials; optimization needs at
+least one configured provider. No OpenAI account or key is required.
 Service port: **8000**. Interactive API documentation: http://localhost:8000/docs.
 
 ## Call the endpoints
@@ -41,7 +43,7 @@ Notes must contain 1–3 non-empty strings; hours must include 0–23 exactly on
 
 ```sh
 docker build -t gridwise:local .
-docker run --rm -p 8000:8000 -e OPENAI_API_KEY -e OPENAI_MODEL gridwise:local
+docker run --rm -p 8000:8000 --env-file .env gridwise:local
 ```
 
 The container listens on `0.0.0.0:8000`. This creates a local image only;
@@ -82,15 +84,23 @@ mistaken for a complete result. One invalid entry does not invalidate other note
 Unsorted/duplicate/out-of-range hours are rejected; entries themselves are returned
 in note-index order. Duplicate note mappings fall back rather than choosing one.
 
-The unspecified provider defaults to an OpenAI Chat Completions adapter in
-`app/llm_provider.py`. Set `OPENAI_API_KEY` and `OPENAI_MODEL` in your shell
-before live use (choose a chat-completions model available to your account).
-No model ID is hard-coded and no extra dependencies are needed. `.env` files
-are not automatically loaded. A different provider can be supplied using
-`completion=callable`, accepting `(system_prompt, user_json)` and returning raw text.
+The configured provider order is Groq then Gemini. Defaults are
+`GROQ_MODEL=llama-3.3-70b-versatile` and `GEMINI_MODEL=gemini-2.5-flash-lite`.
+Set `GROQ_API_KEY` and `GEMINI_API_KEY` in the private `.env` or environment.
+Models are configurable. `LLM_PROVIDER_ORDER=gemini` or `groq` isolates one
+provider for live testing; `groq,gemini` enables fallback.
 
-The adapter follows the [official Chat Completions contract](https://platform.openai.com/docs/api-reference/chat/create).
-It makes one request with a 20-second network timeout; it does not retry automatically.
+The adapter uses [Groq's documented endpoint](https://console.groq.com/docs/openai)
+and [Gemini's compatible endpoint](https://ai.google.dev/gemini-api/docs/openai).
+These are direct requests to those providers, not requests to OpenAI.
+HTTPX makes cancellable asynchronous requests inside the pipeline worker.
+There is one attempt per configured provider, an 8-second wall-clock limit per
+attempt and a shared 17-second budget. Missing keys are skipped. HTTP errors
+(including rate limits), timeouts, malformed JSON, truncated output and failed
+directive guardrails trigger the next provider. If all fail, the API returns a
+sanitized 500. Valid but semantically wrong interpretations cannot be detected
+without reference data; live public-case tests compare against organizer truth.
+
 The prompt requests a JSON array. Invalid JSON, unsupported output, missing model
 configuration, and provider failures produce logged, explicitly labeled `no_op`
 fallbacks. Logs exclude raw model responses, notes, credentials and exception text.
@@ -202,8 +212,8 @@ The API invokes this solver directly after interpretation and guardrail validati
 
 The deadline covers body reading, input validation, the worker pipeline and response
 serialization. Synchronous model/solver work runs outside the event loop, keeping
-health checks responsive. Provider socket timeout is 20 seconds; solver time limit
-is 10 seconds; the overall 28-second guard takes precedence. A timed-out native
+health checks responsive. Each provider attempt is limited to 8 seconds within a 17-second total budget;
+the solver time limit is 10 seconds; the overall 28-second guard takes precedence. A timed-out native
 thread cannot be forcibly stopped, so it retains its bounded worker slot until it
 finishes; its late exceptions are consumed without tracebacks. Actual delivery time
 also depends on the client/network and host scheduling.
@@ -218,3 +228,38 @@ API integration tests mock only provider text: all 10 public scenarios exercise
 real parsing, guardrails, optimization, replay and JSON response validation.
 Other tests verify ordering, 400/500/503/504 behavior, secret redaction, deadlines,
 and delivery failures. These tests do not verify live model accuracy or deployment.
+
+
+## Live configuration and complete API tests
+
+Run the setup command in an interactive terminal, not in chat:
+
+```sh
+python3 -m examples.configure_keys
+```
+
+No key is printed, sent to chat, embedded in code, or committed. The setup command
+refuses to overwrite an existing `.env`; edit that file locally if changing keys.
+`.env.example` contains names and non-secret defaults only. Docker excludes `.env`
+from the image; pass it at runtime with `--env-file .env`.
+
+Start the API:
+
+```sh
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
+```
+
+In another terminal, run real HTTP tests (these consume provider quota):
+
+```sh
+python3 -m examples.check_live_api
+python3 -m examples.check_live_api --rounds 3
+```
+
+The runner tests health, malformed/missing input, all 10 sample interpretations,
+schedule validity against organizer directives, reference costs, recomputed totals,
+and latency. It prints only case IDs, HTTP status, timing, PASS/FAIL and summary.
+It does not print raw error bodies. The 10-case p95 is only a small-sample estimate;
+use repeated rounds to assess stability. To verify Gemini independently, start
+the server with `LLM_PROVIDER_ORDER=gemini`; similarly use `groq` for Groq alone.
+Offline tests simulate primary failures to exercise fallback without spending quota.

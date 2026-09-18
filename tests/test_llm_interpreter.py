@@ -1,12 +1,9 @@
 import copy
-import io
 import json
-import os
 import unittest
 from unittest.mock import Mock, patch
 
 from app.llm_interpreter import interpret_notes, validate_directives
-from app.llm_provider import complete
 
 
 NOTES = [
@@ -121,17 +118,6 @@ class InterpreterTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 interpret_notes(notes, capacity, completion=Mock())
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-only", "OPENAI_MODEL": "configured-model"})
-    @patch("app.llm_provider.urlopen")
-    def test_provider_http_contract(self, urlopen):
-        body = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(EXPECTED)}}]}
-        urlopen.return_value.__enter__.return_value = io.StringIO(json.dumps(body))
-        self.assertEqual(json.loads(complete("system", "context")), EXPECTED)
-        request = urlopen.call_args.args[0]
-        payload = json.loads(request.data)
-        self.assertEqual(payload["model"], "configured-model")
-        self.assertEqual(payload["messages"][0], {"role": "system", "content": "system"})
-        self.assertEqual(urlopen.call_args.kwargs["timeout"], 20)
 
 
 if __name__ == "__main__":
