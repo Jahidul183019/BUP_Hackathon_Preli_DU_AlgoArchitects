@@ -78,14 +78,14 @@ class ApiTests(unittest.TestCase):
             self.assertNotIn(SECRET, response.text + " ".join(captured.output))
             self.assertTrue(all(record.exc_info is None for record in captured.records))
 
-    def test_bad_provider_response_or_failure_never_reaches_optimizer(self):
+    def test_bad_provider_response_or_failure_falls_back_to_safe_schedule(self):
         for kwargs in [{"return_value": "invalid JSON " + SECRET}, {"side_effect": RuntimeError(SECRET)},
                        {"return_value": "[]"}]:
             with self.subTest(kwargs=kwargs), patch("app.llm_provider.complete", **kwargs), \
-                 patch.object(main, "optimize_schedule") as solver, self.assertLogs("app", level="WARNING") as captured:
+                 self.assertLogs("app", level="WARNING") as captured:
                 response = self.client.post("/optimize-energy", json=self.request)
-                solver.assert_not_called()
-            self.assertEqual(response.status_code, 500)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(all(item["directive_type"] == "no_op" for item in response.json()["directive_interpretation"]))
             self.assertNotIn(SECRET, response.text + " ".join(captured.output))
             self.assertTrue(all(record.exc_info is None for record in captured.records))
 

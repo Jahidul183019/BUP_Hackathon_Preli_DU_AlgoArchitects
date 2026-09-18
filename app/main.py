@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from .final_validator import final_validator
-from .llm_interpreter import DirectiveFallback, interpret_notes, validate_directives
+from .llm_interpreter import interpret_notes, validate_directives
 from .schedule_optimizer import optimize_schedule
 from .schemas import OptimizeRequest, OptimizeResponse
 
@@ -88,9 +88,6 @@ def _run_pipeline(request: OptimizeRequest) -> dict:
         directives = validate_directives(
             interpreted, note_count=len(request.operator_notes), capacity_kwh=battery["capacity_kwh"]
         )
-        if any(isinstance(entry, DirectiveFallback) for entry in directives):
-            logger.error("interpretation_failed")
-            raise RuntimeError("Pipeline failed")
         result = optimize_schedule(hours, battery, directives)
         errors = final_validator(result["hourly_plan"], hours, battery, directives)
         if errors:

@@ -164,16 +164,17 @@ There is one attempt per configured provider, an 8-second wall-clock limit for t
 attempt and a shared 17-second budget. The final provider can use the remaining
 budget. Groq GPT-OSS uses low reasoning effort; Gemini 3.x uses minimal effort. Missing keys are skipped. HTTP errors
 (including rate limits), timeouts, malformed JSON, truncated output and failed
-directive guardrails trigger the next provider. If all fail, the API returns a
-sanitized 500. Valid but semantically wrong interpretations cannot be detected
+directive guardrails trigger the next provider. If all providers fail, the interpreter
+returns one explicitly labeled `no_op` fallback per note so a valid request still
+receives a safe, schema-valid schedule. Valid but semantically wrong interpretations cannot be detected
 without reference data; live public-case tests compare against organizer truth.
 
 The prompt requests a JSON array. Invalid JSON, unsupported output, missing model
 configuration, and provider failures produce logged, explicitly labeled `no_op`
 fallbacks. Logs exclude raw model responses, notes, credentials and exception text.
-A fallback is **not evidence the note is irrelevant**, and cannot guarantee a valid
-energy schedule. The API detects internal fallback markers and fails the request with a controlled
-500 before scheduling, rather than treating failed interpretation as irrelevant. Invalid caller inputs raise `ValueError`.
+A fallback is **not evidence the note is irrelevant**, and cannot guarantee that the
+intended operational constraint was applied; it does allow the API to return a safe
+schedule instead of crashing on a valid request. Invalid caller inputs raise `ValueError`.
 
 ### Tests and the three examples
 
@@ -243,8 +244,7 @@ Malformed inputs/directives raise `ValueError`; no invalid directive is silently
 ignored. Infeasible scenarios raise `InfeasibleScheduleError`; solver timeout,
 failure, or failed final replay raises `OptimizationError`. No dummy schedule is
 returned on optimization failure. The solver has a 10-second time limit.
-An explicitly supplied `no_op`, including an interpreter fallback, has no effect;
-callers must decide how to handle failed interpretation before invoking the solver.
+An explicitly supplied `no_op`, including an interpreter fallback, has no effect.
 
 ### Public sample checks
 

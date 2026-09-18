@@ -22,7 +22,10 @@ Each note maps to exactly one of these six types. Required adjustment shapes:
 - minimum_battery_reserve: {"hours":[...], "minimum_energy_kwh": number}.
   Convert a percentage/fraction of battery capacity to absolute kWh using
   capacity_kwh supplied with the notes. Half full / 50% of a 200 kWh battery
-  means minimum_energy_kwh = 100. Never guess the capacity.
+  means minimum_energy_kwh = 100. Holding or keeping a full battery, or
+  maintaining state of charge, means minimum_battery_reserve, not
+  no_discharge_window. Use the full capacity for "full" or "fully charged".
+  Never guess the capacity.
 - no_charge_window: {"hours":[...]}.
 - no_discharge_window: {"hours":[...]}.
 - max_grid_window: {"hours":[...], "max_grid_kwh": number}.
@@ -32,9 +35,23 @@ Each note maps to exactly one of these six types. Required adjustment shapes:
 Windows are start-inclusive and end-exclusive: 1 PM to 3 PM -> [13,14];
 6 PM to 9 PM -> [18,19,20]. Noon is 12; midnight is 0 (end-of-day is 24).
 Hours must be unique integers 0 through 23, sorted ascending.
+For windows that cross midnight, list every covered hour as unique integers in
+ascending order. "10 PM to 2 AM" is [0,1,22,23], not [22,23,0,1].
 Numeric values must be finite and non-negative; factor must be between 0 and 1;
 reserve must not exceed capacity_kwh. For no_op, applies=false and adjustment
 is null. For all other types, applies=true with exactly the required fields.
+
+Grid vs battery — do not confuse these:
+- "grid import", "grid draw", "island mode", "grid disconnect", "off-grid",
+  or "no grid" means max_grid_window; use max_grid_kwh: 0 when grid use is
+  banned entirely. Zero grid import, island mode, and grid disconnect are
+  always max_grid_window with max_grid_kwh: 0, not no_charge_window.
+- "charge the battery" or "add to the battery" means no_charge_window.
+- "discharge" or "draw from the battery" means no_discharge_window.
+- "hold full capacity", "stay fully charged", "keep topped up", or
+  "maintain state of charge" means minimum_battery_reserve. Use the battery
+  capacity as minimum_energy_kwh for "full" or "fully charged"; for X% of
+  capacity, calculate capacity_kwh * X / 100.
 
 Output ONLY a JSON array, no markdown or surrounding text. Include exactly
 one entry per note, in the same order, with note_index 0,1,...:
@@ -192,6 +209,13 @@ def interpret_notes(
         return [_fallback(i, "provider_error") for i in range(len(operator_notes))]
     try:
         parsed = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
+        return validate_directives(parsed, note_count=len(operator_notes), capacity_kwh=capacity_kwh)
     except (TypeError, ValueError, RecursionError):
-        return [_fallback(i, "malformed_json") for i in range(len(operator_notes))]
-    return validate_directives(parsed, note_count=len(operator_notes), capacity_kwh=capacity_kwh)
+        # A malformed or semantically invalid model response must not take down
+        # an otherwise valid API request. Keep one explicit fallback per note.
+        return [_fallback(i, "invalid_model_response") for i in range(len(operator_notes))]
+    except Exception:
+        # Guard against unexpected parser/guardrail failures without exposing
+        # provider content or turning a valid request into HTTP 500.
+        logger.warning("Directive interpretation failed; using no_op fallbacks")
+        return [_fallback(i, "interpretation_error") for i in range(len(operator_notes))]
