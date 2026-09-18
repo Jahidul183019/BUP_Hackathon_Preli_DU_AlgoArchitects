@@ -6,8 +6,8 @@ from pathlib import Path
 DEFAULTS = {
     "GROQ_API_KEY": "",
     "GEMINI_API_KEY": "",
-    "GROQ_MODEL": "llama-3.3-70b-versatile",
-    "GEMINI_MODEL": "gemini-2.5-flash-lite",
+    "GROQ_MODEL": "openai/gpt-oss-20b",
+    "GEMINI_MODEL": "gemini-3.1-flash-lite",
     "LLM_PROVIDER_ORDER": "groq,gemini",
 }
 ENV_FILE = Path(__file__).resolve().parents[1] / ".env"

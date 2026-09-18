@@ -85,7 +85,7 @@ Unsorted/duplicate/out-of-range hours are rejected; entries themselves are retur
 in note-index order. Duplicate note mappings fall back rather than choosing one.
 
 The configured provider order is Groq then Gemini. Defaults are
-`GROQ_MODEL=llama-3.3-70b-versatile` and `GEMINI_MODEL=gemini-2.5-flash-lite`.
+`GROQ_MODEL=openai/gpt-oss-20b` and `GEMINI_MODEL=gemini-3.1-flash-lite`.
 Set `GROQ_API_KEY` and `GEMINI_API_KEY` in the private `.env` or environment.
 Models are configurable. `LLM_PROVIDER_ORDER=gemini` or `groq` isolates one
 provider for live testing; `groq,gemini` enables fallback.
@@ -94,8 +94,9 @@ The adapter uses [Groq's documented endpoint](https://console.groq.com/docs/open
 and [Gemini's compatible endpoint](https://ai.google.dev/gemini-api/docs/openai).
 These are direct requests to those providers, not requests to OpenAI.
 HTTPX makes cancellable asynchronous requests inside the pipeline worker.
-There is one attempt per configured provider, an 8-second wall-clock limit per
-attempt and a shared 17-second budget. Missing keys are skipped. HTTP errors
+There is one attempt per configured provider, an 8-second wall-clock limit for the primary
+attempt and a shared 17-second budget. The final provider can use the remaining
+budget. Groq GPT-OSS uses low reasoning effort; Gemini 3.x uses minimal effort. Missing keys are skipped. HTTP errors
 (including rate limits), timeouts, malformed JSON, truncated output and failed
 directive guardrails trigger the next provider. If all fail, the API returns a
 sanitized 500. Valid but semantically wrong interpretations cannot be detected
@@ -212,7 +213,8 @@ The API invokes this solver directly after interpretation and guardrail validati
 
 The deadline covers body reading, input validation, the worker pipeline and response
 serialization. Synchronous model/solver work runs outside the event loop, keeping
-health checks responsive. Each provider attempt is limited to 8 seconds within a 17-second total budget;
+health checks responsive. The primary provider is limited to 8 seconds; the final fallback can use the
+remaining shared 17-second budget;
 the solver time limit is 10 seconds; the overall 28-second guard takes precedence. A timed-out native
 thread cannot be forcibly stopped, so it retains its bounded worker slot until it
 finishes; its late exceptions are consumed without tracebacks. Actual delivery time

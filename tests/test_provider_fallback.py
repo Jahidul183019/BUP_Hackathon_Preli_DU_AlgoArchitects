@@ -89,7 +89,13 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(observed[1].url.host, "generativelanguage.googleapis.com")
         for request, name in zip(observed, ["groq", "gemini"]):
             self.assertEqual(request.headers["authorization"], "Bearer " + CONFIG[name.upper() + "_API_KEY"])
-            self.assertEqual(json.loads(request.content)["model"], CONFIG[name.upper() + "_MODEL"])
+            payload = json.loads(request.content)
+            self.assertEqual(payload["model"], CONFIG[name.upper() + "_MODEL"])
+            if name == "groq":
+                self.assertEqual(payload["reasoning_effort"], "low")
+                self.assertEqual(payload["max_tokens"], 2048)
+            else:
+                self.assertEqual(payload["reasoning_effort"], "minimal")
 
     def test_literal_config_and_environment_override(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -30,7 +30,12 @@ async def _request(name: str, settings: dict, system_prompt: str, user_json: str
         "temperature": 0,
         "max_tokens": 1024,
     }
-    async with httpx.AsyncClient(timeout=ATTEMPT_TIMEOUT_SECONDS, follow_redirects=False) as client:
+    if name == "groq" and settings[model_name].startswith("openai/gpt-oss-"):
+        payload["reasoning_effort"] = "low"
+        payload["max_tokens"] = 2048
+    if name == "gemini" and settings[model_name].startswith("gemini-3."):
+        payload["reasoning_effort"] = "minimal"
+    async with httpx.AsyncClient(timeout=TOTAL_TIMEOUT_SECONDS, follow_redirects=False) as client:
         response = await client.post(endpoint, json=payload, headers={"Authorization": f"Bearer {settings[key_name]}"})
         response.raise_for_status()
         choice = response.json()["choices"][0]
@@ -56,7 +61,7 @@ def _check_content(raw: str, user_json: str) -> None:
 async def _complete(system_prompt: str, user_json: str, settings: dict) -> str:
     deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS
     order = settings["LLM_PROVIDER_ORDER"].split(",")
-    for name in order:
+    for index, name in enumerate(order):
         if not settings[PROVIDERS[name][1]]:
             logger.warning("provider_skipped_missing_key provider=%s", name)
             continue
@@ -67,7 +72,7 @@ async def _complete(system_prompt: str, user_json: str, settings: dict) -> str:
             # Wall-clock deadline cancels the HTTP task, including slow streams.
             raw = await asyncio.wait_for(
                 _request(name, settings, system_prompt, user_json),
-                timeout=min(ATTEMPT_TIMEOUT_SECONDS, remaining),
+                timeout=remaining if index == len(order) - 1 else min(ATTEMPT_TIMEOUT_SECONDS, remaining),
             )
             _check_content(raw, user_json)
             logger.info("provider_succeeded provider=%s", name)
