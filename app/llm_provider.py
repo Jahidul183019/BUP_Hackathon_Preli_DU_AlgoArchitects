@@ -12,6 +12,7 @@ from .settings import read_settings
 logger = logging.getLogger(__name__)
 ATTEMPT_TIMEOUT_SECONDS = 8.0
 TOTAL_TIMEOUT_SECONDS = 17.0
+RETRY_BACKOFF_SECONDS = 0.5
 PROVIDERS = {
     "groq": ("https://api.groq.com/openai/v1/chat/completions", "GROQ_API_KEY", "GROQ_MODEL"),
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "GEMINI_API_KEY", "GEMINI_MODEL"),
@@ -77,22 +78,36 @@ async def _complete(system_prompt: str, user_json: str, settings: dict) -> str:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        try:
-            # Wall-clock deadline cancels the HTTP task, including slow streams.
-            raw = await asyncio.wait_for(
-                _request(name, settings, system_prompt, user_json),
-                timeout=remaining if index == len(order) - 1 else min(ATTEMPT_TIMEOUT_SECONDS, remaining),
-            )
-            _check_content(raw, user_json)
-            logger.info("provider_succeeded provider=%s", name)
-            return raw
-        except TimeoutError:
-            logger.warning("provider_timeout provider=%s", name)
-        except httpx.HTTPStatusError as exc:
-            logger.warning("provider_http_failure provider=%s status=%s", name, exc.response.status_code)
-        except Exception:
-            # Never log provider bodies, exception strings, keys or prompts.
-            logger.warning("provider_response_failed provider=%s", name)
+        attempts = 2 if index < len(order) - 1 else 1
+        for attempt in range(attempts):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                # Wall-clock deadline cancels the HTTP task, including slow streams.
+                raw = await asyncio.wait_for(
+                    _request(name, settings, system_prompt, user_json),
+                    timeout=remaining if index == len(order) - 1 else min(ATTEMPT_TIMEOUT_SECONDS, remaining),
+                )
+                _check_content(raw, user_json)
+                logger.info("provider_succeeded provider=%s", name)
+                return raw
+            except TimeoutError:
+                logger.warning("provider_timeout provider=%s", name)
+                break
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                logger.warning("provider_http_failure provider=%s status=%s", name, status)
+                # One quick retry on rate limits/transient server errors is far
+                # cheaper than falling through to a slower provider.
+                if attempt + 1 < attempts and (status == 429 or status >= 500):
+                    await asyncio.sleep(RETRY_BACKOFF_SECONDS)
+                    continue
+                break
+            except Exception:
+                # Never log provider bodies, exception strings, keys or prompts.
+                logger.warning("provider_response_failed provider=%s", name)
+                break
     raise ProviderUnavailable("No provider returned a valid interpretation") from None
 
 

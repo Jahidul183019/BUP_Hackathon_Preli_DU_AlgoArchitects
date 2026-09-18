@@ -196,7 +196,7 @@ mistaken for a complete result. One invalid entry does not invalidate other note
 Unsorted/duplicate/out-of-range hours are rejected; entries themselves are returned
 in note-index order. Duplicate note mappings fall back rather than choosing one.
 
-The configured provider order is Groq then Gemini, with OpenRouter also supported. Defaults are
+The default provider order is Groq, then Gemini, then OpenRouter (skipped if its key is unset). Defaults are
 `GROQ_MODEL=openai/gpt-oss-20b`, `GEMINI_MODEL=gemini-3.1-flash-lite`, and `OPENROUTER_MODEL=openai/gpt-4o-mini`.
 Set `GROQ_API_KEY`, `GEMINI_API_KEY`, and optionally `OPENROUTER_API_KEY` in the private `.env` or environment.
 Models are configurable. `LLM_PROVIDER_ORDER=gemini` or `groq` isolates one
@@ -206,7 +206,7 @@ The adapter uses [Groq's documented endpoint](https://console.groq.com/docs/open
 and [Gemini's compatible endpoint](https://ai.google.dev/gemini-api/docs/openai).
 These are direct requests to those providers, not requests to OpenAI.
 HTTPX makes cancellable asynchronous requests inside the pipeline worker.
-There is one attempt per configured provider, an 8-second wall-clock limit for the primary
+Non-final providers get one quick retry on HTTP 429/5xx (0.5 s backoff), an 8-second wall-clock limit per
 attempt and a shared 17-second budget. The final provider can use the remaining
 budget. Groq GPT-OSS uses low reasoning effort; Gemini 3.x uses minimal effort. Missing keys are skipped. HTTP errors
 (including rate limits), timeouts, malformed JSON, truncated output and failed
@@ -288,8 +288,9 @@ affect any provided public sample.
 
 Malformed inputs/directives raise `ValueError`; no invalid directive is silently
 ignored. Infeasible scenarios raise `InfeasibleScheduleError`; solver timeout,
-failure, or failed final replay raises `OptimizationError`. No dummy schedule is
-returned on optimization failure. The solver has a 10-second time limit.
+failure, or failed final replay raises `OptimizationError`. The API layer then keeps the
+largest subset of directives that yields a valid schedule and marks only the dropped
+notes as `no_op` with an explicit explanation; if even the baseline fails it returns HTTP 500. The solver has a 10-second time limit.
 An explicitly supplied `no_op`, including an interpreter fallback, has no effect.
 
 ### Public sample checks
@@ -320,7 +321,7 @@ The API invokes this solver directly after interpretation and guardrail validati
 
 - HTTP 400: malformed JSON, missing fields or invalid input; no input values echoed.
 - HTTP 500: failed interpretation, optimizer failure, failed final replay, or response validation failure.
-- HTTP 503: all four bounded worker slots are occupied; retry later.
+- HTTP 503: all eight bounded worker slots stayed occupied for 10 seconds; retry later.
 - HTTP 504: the 28-second request deadline expires.
 
 The deadline covers body reading, input validation, the worker pipeline and response

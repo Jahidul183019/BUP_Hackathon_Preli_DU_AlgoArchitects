@@ -10,7 +10,7 @@ DEFAULTS = {
     "GROQ_MODEL": "openai/gpt-oss-20b",
     "GEMINI_MODEL": "gemini-3.1-flash-lite",
     "OPENROUTER_MODEL": "openai/gpt-4o-mini",
-    "LLM_PROVIDER_ORDER": "groq,gemini",
+    "LLM_PROVIDER_ORDER": "groq,gemini,openrouter",
 }
 ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 

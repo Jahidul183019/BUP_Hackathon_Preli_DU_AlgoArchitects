@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
+from itertools import combinations
 from threading import BoundedSemaphore
 
 from fastapi import FastAPI, Request
@@ -15,8 +17,10 @@ from .schemas import OptimizeRequest, OptimizeResponse
 
 logger = logging.getLogger(__name__)
 REQUEST_TIMEOUT_SECONDS = 28.0
-_workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gridwise")
-_slots = BoundedSemaphore(4)
+MAX_WORKERS = 8
+SLOT_WAIT_SECONDS = 10.0
+_workers = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="gridwise")
+_slots = BoundedSemaphore(MAX_WORKERS)
 
 
 class RequestBoundary:
@@ -79,6 +83,29 @@ async def health():
     return {"status": "ok"}
 
 
+def _dropped(index: int) -> dict:
+    return {
+        "note_index": index,
+        "applies": False,
+        "directive_type": "no_op",
+        "structured_adjustment": None,
+        "explanation": "Conflicting constraints made schedule infeasible; this directive was not applied.",
+    }
+
+
+def _largest_feasible_subset(hours: list[dict], battery: dict, directives: list[dict]) -> tuple[list[dict], dict]:
+    active = [i for i, d in enumerate(directives) if d["directive_type"] != "no_op"]
+    for keep_count in range(len(active) - 1, -1, -1):
+        for kept in combinations(active, keep_count):
+            candidate = [d if i in kept or d["directive_type"] == "no_op" else _dropped(i)
+                         for i, d in enumerate(directives)]
+            try:
+                return candidate, optimize_schedule(hours, battery, candidate)
+            except OptimizationError:
+                continue
+    raise RuntimeError("Pipeline failed")
+
+
 def _run_pipeline(request: OptimizeRequest) -> dict:
     # Request schema validation has already completed before this worker starts.
     try:
@@ -91,18 +118,10 @@ def _run_pipeline(request: OptimizeRequest) -> dict:
         try:
             result = optimize_schedule(hours, battery, directives)
         except OptimizationError:
-            logger.warning("Directives caused infeasible schedule; falling back to baseline")
-            directives = [
-                {
-                    "note_index": i,
-                    "applies": False,
-                    "directive_type": "no_op",
-                    "structured_adjustment": None,
-                    "explanation": "Conflicting constraints made schedule infeasible; fell back to baseline.",
-                }
-                for i in range(len(request.operator_notes))
-            ]
-            result = optimize_schedule(hours, battery, directives)
+            # Keep the largest subset of directives that still yields a valid
+            # schedule; only the conflicting notes are downgraded to no_op.
+            logger.warning("Directives caused infeasible schedule; searching feasible subset")
+            directives, result = _largest_feasible_subset(hours, battery, directives)
         errors = final_validator(result["hourly_plan"], hours, battery, directives)
         if errors:
             # Validator text may contain untrusted input; log only an event code.
@@ -126,8 +145,12 @@ def _run_pipeline(request: OptimizeRequest) -> dict:
     503: {"description": "Service busy"}, 504: {"description": "Request timed out"},
 })
 async def optimize(request: OptimizeRequest):
-    if not _slots.acquire(blocking=False):
-        return JSONResponse(status_code=503, content={"detail": "Service busy; retry later"})
+    # Wait briefly for a worker slot instead of failing immediately under bursts.
+    deadline = time.monotonic() + SLOT_WAIT_SECONDS
+    while not _slots.acquire(blocking=False):
+        if time.monotonic() >= deadline:
+            return JSONResponse(status_code=503, content={"detail": "Service busy; retry later"})
+        await asyncio.sleep(0.05)
     try:
         future = asyncio.get_running_loop().run_in_executor(_workers, _run_pipeline, request)
     except Exception:
