@@ -12,7 +12,6 @@
 | **2. GitHub Repository** | https://github.com/Jahidul183019/BUP_Hackathon_Preli_DU_AlgoArchitects |
 | **3. Docker Image Fallback** | `ghcr.io/jahidul183019/gridwise:latest` (`docker pull ghcr.io/jahidul183019/gridwise:latest`) |
 | **4. Documentation & Setup** | This `README.md` (reproducible local setup & test guides) |
-| **5. Demo Video (≤3:00 min)** | `[INSERT_DEMO_VIDEO_LINK_HERE]` (Accessible publicly without login) |
 
 Python 3.12 + FastAPI. `POST /optimize-energy` runs the real pipeline:
 LLM interpretation -> deterministic guardrails -> joint 24-hour LP optimization
