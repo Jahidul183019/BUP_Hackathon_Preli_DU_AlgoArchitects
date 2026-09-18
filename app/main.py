@@ -71,6 +71,9 @@ async def http_error_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"detail": "Request could not be processed"})
 
 
+@app.get("/")
+def read_root():
+    return {"status": "online"}
 @app.get("/health")
 async def health():
     return {"status": "ok"}
