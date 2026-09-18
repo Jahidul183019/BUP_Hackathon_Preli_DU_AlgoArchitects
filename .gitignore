@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.env.*
+!.env.example
+secrets/
+secrets.*
+credentials*.json
+*.pem
+*.key
+.DS_Store
