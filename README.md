@@ -4,10 +4,56 @@
 
 **Live API**: https://bup-hackathon-preli-du-algoarchitects.onrender.com
 
+## Submission Deliverables
+
+| Deliverable | Location / Value |
+|---|---|
+| **1. Live API Endpoint** | https://bup-hackathon-preli-du-algoarchitects.onrender.com |
+| **2. GitHub Repository** | https://github.com/Jahidul183019/BUP_Hackathon_Preli_DU_AlgoArchitects |
+| **3. Docker Image Fallback** | `ghcr.io/jahidul183019/gridwise:latest` (`docker pull ghcr.io/jahidul183019/gridwise:latest`) |
+| **4. Documentation & Setup** | This `README.md` (reproducible local setup & test guides) |
+| **5. Demo Video (≤3:00 min)** | `[INSERT_DEMO_VIDEO_LINK_HERE]` (Accessible publicly without login) |
+
 Python 3.12 + FastAPI. `POST /optimize-energy` runs the real pipeline:
 LLM interpretation -> deterministic guardrails -> joint 24-hour LP optimization
 -> independent final replay -> schema-validated JSON response.
 The interpreter and optimizer also remain directly callable for isolated tests.
+
+## Architecture Overview
+
+```mermaid
+flowchart TD
+    Client(["Caller Request (JSON)"]) --> Boundary["RequestBoundary Middleware<br/>(28s Global Timeout & Sanitized Errors)"]
+    subgraph Core_Pipeline ["GridWise Execution Pipeline"]
+        direction TB
+        InputVal["1. Pydantic v2 Validation<br/>(Schema, Strict Types, Battery Bounds)"]
+        subgraph LLM_Layer ["2. LLM Reasoning Layer"]
+            Chain["Provider Fallback Chain<br/>Groq (Primary) → Gemini (Fallback) → OpenRouter"]
+            Extract["Structured Directive Extraction<br/>(Hours, Factors, Reserve Bounds)"]
+        end
+        subgraph Guardrails ["3. Deterministic Guardrails"]
+            Guard["Rule Validator<br/>(Sort Half-Open Hours, Whitelist Types, Clamp Factors)"]
+        end
+        subgraph Optimizer ["4. Mathematical Optimization"]
+            LP["SciPy HiGHS LP Solver<br/>(Joint 24-Hour Continuous Optimization)"]
+            Constraints["Hard Physical Constraints<br/>• Hourly Energy Balance<br/>• Battery Neutrality: E(24) = E(0)<br/>• Rate & Window Limits"]
+        end
+        subgraph Validator ["5. Independent Replay"]
+            Replay["State Transition Replayer<br/>(Replays Battery Energy & Verifies Limits)"]
+        end
+    end
+    Response(["Validated 200 OK Response (JSON)"])
+
+    Boundary --> InputVal
+    InputVal --> Chain
+    Chain --> Extract
+    Extract --> Guard
+    Guard --> LP
+    LP --- Constraints
+    LP --> Replay
+    Replay --> Response
+```
+
 
 ## Run locally
 
