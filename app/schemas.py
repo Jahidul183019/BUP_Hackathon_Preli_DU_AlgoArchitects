@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 
 Number = Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
@@ -47,13 +47,44 @@ class OptimizeRequest(Schema):
         return self
 
 
+class WindowAdjustment(Schema):
+    hours: list[Hour] = Field(min_length=1, max_length=24)
+
+    @model_validator(mode="after")
+    def validate_hours(self):
+        if self.hours != sorted(set(self.hours)):
+            raise ValueError("Directive hours must be unique and ascending")
+        return self
+
+
+class SolarAdjustment(WindowAdjustment):
+    factor: Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
+
+
+class ReserveAdjustment(WindowAdjustment):
+    minimum_energy_kwh: Number
+
+
+class GridAdjustment(WindowAdjustment):
+    max_grid_kwh: Number
+
+
 class DirectiveInterpretation(Schema):
-    # Expand this placeholder contract when the real interpreter is added.
-    note_index: Annotated[int, Field(ge=0)]
-    applies: Literal[False] = False
-    directive_type: Literal["no_op"] = "no_op"
-    structured_adjustment: None = None
+    note_index: Annotated[int, Field(strict=True, ge=0)]
+    applies: StrictBool = False
+    directive_type: Literal["solar_reduction", "minimum_battery_reserve", "no_charge_window",
+                            "no_discharge_window", "max_grid_window", "no_op"] = "no_op"
+    structured_adjustment: SolarAdjustment | ReserveAdjustment | GridAdjustment | WindowAdjustment | None = None
     explanation: str = "placeholder"
+
+    @model_validator(mode="after")
+    def validate_directive_shape(self):
+        expected = {"solar_reduction": SolarAdjustment, "minimum_battery_reserve": ReserveAdjustment,
+                    "max_grid_window": GridAdjustment, "no_charge_window": WindowAdjustment,
+                    "no_discharge_window": WindowAdjustment, "no_op": type(None)}[self.directive_type]
+        if self.applies != (self.directive_type != "no_op") or type(self.structured_adjustment) is not expected:
+            raise ValueError("Directive type, applies and adjustment must agree")
+        return self
 
 
 class HourlyPlan(Schema):

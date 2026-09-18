@@ -1,9 +1,9 @@
-# GridWise API skeleton
+# GridWise API
 
-Python 3.12 + FastAPI. The HTTP API still uses dummy interpretation and optimization.
-A standalone LLM interpreter and LP optimizer are available separately; neither is wired into the API.
-The response contains one placeholder `no_op` per note and 24 zero-valued
-hourly entries. It is schema-correct, **not a valid energy schedule**.
+Python 3.12 + FastAPI. `POST /optimize-energy` runs the real pipeline:
+LLM interpretation -> deterministic guardrails -> joint 24-hour LP optimization
+-> independent final replay -> schema-validated JSON response.
+The interpreter and optimizer also remain directly callable for isolated tests.
 
 ## Run locally
 
@@ -13,10 +13,12 @@ From this directory:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-access-log
 ```
 
-No API keys or environment variables are needed for this skeleton.
+Before starting, set `OPENAI_API_KEY` and `OPENAI_MODEL` in your environment.
+Choose a Chat Completions model available to your account. `.env` is not loaded
+automatically. `/health` needs no credentials, but optimization requires them.
 Service port: **8000**. Interactive API documentation: http://localhost:8000/docs.
 
 ## Call the endpoints
@@ -29,7 +31,8 @@ curl -i -X POST http://localhost:8000/optimize-energy \
 ```
 
 Both return HTTP 200 for valid requests. `/health` returns `{"status":"ok"}`.
-The optimization response echoes `scenario_id` and contains placeholder values.
+The optimization response echoes `scenario_id`, returns one interpretation per note
+and a valid 24-hour schedule, with totals computed from that schedule.
 Malformed JSON, missing fields, invalid types, non-finite/negative energy values,
 blank notes, duplicate/missing hours, and inconsistent battery bounds return HTTP 400.
 Notes must contain 1–3 non-empty strings; hours must include 0–23 exactly once.
@@ -37,8 +40,8 @@ Notes must contain 1–3 non-empty strings; hours must include 0–23 exactly on
 ## Docker
 
 ```sh
-docker build -t gridwise:skeleton .
-docker run --rm -p 8000:8000 gridwise:skeleton
+docker build -t gridwise:local .
+docker run --rm -p 8000:8000 -e OPENAI_API_KEY -e OPENAI_MODEL gridwise:local
 ```
 
 The container listens on `0.0.0.0:8000`. This creates a local image only;
@@ -46,17 +49,19 @@ publishing a registry image and deployment are separate steps.
 
 ## Extension points
 
-- `app/schemas.py`: request and response models. Extend the placeholder directive model with the five operational directive types when adding interpretation.
-- `app/interpreter.py`: replace `interpret_notes` with LLM extraction and guardrails.
-- `app/optimizer.py`: replace `optimize_energy` with scheduling and final validation.
-- `app/main.py`: HTTP routing and HTTP 400 validation errors.
+- `app/schemas.py`: request and response models for all six directive types.
+- `app/llm_interpreter.py`: LLM extraction, guardrails, and internal fallback markers.
+- `app/schedule_optimizer.py`: joint LP scheduling.
+- `app/final_validator.py`: independent replay validation.
+- `app/main.py`: pipeline orchestration, deadlines and sanitized errors.
+- The original `app/interpreter.py` and `app/optimizer.py` are unused legacy placeholders.
 
-Dependencies: FastAPI, Pydantic, Uvicorn. Never commit secrets; `.gitignore`
+Dependencies: FastAPI, Pydantic, Uvicorn, SciPy; HTTPX for API tests. Never commit secrets; `.gitignore`
 excludes common secret files and the Docker build copies only application code
 and requirements.
 
 
-## Standalone LLM interpreter (not connected to the API)
+## LLM interpreter (also callable independently)
 
 ```python
 from app.llm_interpreter import interpret_notes, validate_directives
@@ -90,14 +95,15 @@ The prompt requests a JSON array. Invalid JSON, unsupported output, missing mode
 configuration, and provider failures produce logged, explicitly labeled `no_op`
 fallbacks. Logs exclude raw model responses, notes, credentials and exception text.
 A fallback is **not evidence the note is irrelevant**, and cannot guarantee a valid
-energy schedule. Future API integration should decide whether to retry or fail a
-request when fallbacks occur. Invalid caller inputs raise `ValueError`.
+energy schedule. The API detects internal fallback markers and fails the request with a controlled
+500 before scheduling, rather than treating failed interpretation as irrelevant. Invalid caller inputs raise `ValueError`.
 
 ### Tests and the three examples
 
 From the project root, with the local environment activated:
 
 ```sh
+pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 python -m examples.check_interpreter
 ```
@@ -115,7 +121,7 @@ The live check makes a real provider request and asserts the example semantics;
 it fails if the model misinterprets them or a fallback occurs.
 
 
-## Standalone LP optimizer (not connected to the API)
+## LP optimizer (also callable independently)
 
 ```python
 from app.schedule_optimizer import optimize_schedule
@@ -177,12 +183,38 @@ They compare validity and cost, not exact battery actions, because optimal
 schedules may differ.
 
 ```sh
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m examples.check_optimizer
 python -m examples.check_optimizer --all
 python -m examples.check_optimizer --show-plan
 python -m unittest discover -s tests -v
 ```
 
-The API modules `app/main.py`, `app/interpreter.py`, and `app/optimizer.py`
-retain their original dummy behavior. The new solver is in `app/schedule_optimizer.py`.
+The API invokes this solver directly after interpretation and guardrail validation.
+
+
+## API deadlines and failure handling
+
+- HTTP 400: malformed JSON, missing fields or invalid input; no input values echoed.
+- HTTP 500: failed interpretation, optimizer failure, failed final replay, or response validation failure.
+- HTTP 503: all four bounded worker slots are occupied; retry later.
+- HTTP 504: the 28-second request deadline expires.
+
+The deadline covers body reading, input validation, the worker pipeline and response
+serialization. Synchronous model/solver work runs outside the event loop, keeping
+health checks responsive. Provider socket timeout is 20 seconds; solver time limit
+is 10 seconds; the overall 28-second guard takes precedence. A timed-out native
+thread cannot be forcibly stopped, so it retains its bounded worker slot until it
+finishes; its late exceptions are consumed without tracebacks. Actual delivery time
+also depends on the client/network and host scheduling.
+
+Error responses are generic. Application logs contain controlled event codes, not
+exception strings, raw validator errors, stack traces, request bodies or credentials.
+The documented run command and Docker entrypoint disable access logs. The response
+schema supports all five operational directive shapes plus `no_op`.
+
+Run the complete offline suite with `python -m unittest discover -s tests -v`.
+API integration tests mock only provider text: all 10 public scenarios exercise
+real parsing, guardrails, optimization, replay and JSON response validation.
+Other tests verify ordering, 400/500/503/504 behavior, secret redaction, deadlines,
+and delivery failures. These tests do not verify live model accuracy or deployment.
