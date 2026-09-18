@@ -50,8 +50,29 @@ docker build -t gridwise:local .
 docker run --rm -p 8000:8000 --env-file .env gridwise:local
 ```
 
-The container listens on `0.0.0.0:8000`. This creates a local image only;
-publishing a registry image and deployment are separate steps.
+The container listens on `0.0.0.0:8000`.
+
+### Docker fallback image (submission)
+
+A tested container image is published to GitHub Container Registry on every
+`main` push by the CI pipeline. Pull and run the fallback image:
+
+```sh
+docker pull ghcr.io/jahidul183019/gridwise:latest
+docker run --rm -p 8000:8000 \
+  -e GROQ_API_KEY="<your-key>" \
+  -e GEMINI_API_KEY="<your-key>" \
+  ghcr.io/jahidul183019/gridwise:latest
+```
+
+- **Registry**: `ghcr.io/jahidul183019/gridwise`
+- **Tag**: `latest` (also available as `aff6963` for the current build)
+- **Port**: `8000` (exposed, bound to `0.0.0.0`)
+- **Secrets**: not baked in; pass via `-e` or `--env-file .env`
+- **Health check**: `curl http://localhost:8000/health` → `{"status":"ok"}`
+
+The image contains only `requirements.txt` and the `app/` package. No `.env`,
+tests, examples, or documentation are included.
 
 ## Deployed API
 
@@ -310,6 +331,21 @@ It does not print raw error bodies. The 10-case p95 is only a small-sample estim
 use repeated rounds to assess stability. To verify Gemini independently, start
 the server with `LLM_PROVIDER_ORDER=gemini`; similarly use `groq` for Groq alone.
 Offline tests simulate primary failures to exercise fallback without spending quota.
+
+
+## Known limitations
+
+- Gemini is slower than Groq. The Gemini-only p95 is ~10 s vs ~3.7 s for Groq.
+  The default provider order (`groq,gemini`) uses Gemini only as a fallback.
+- External provider availability, rate limits, and latency are not guaranteed.
+  Groq may return HTTP 429 under load; the fallback handles this automatically.
+- Render free-tier instances may cold-start after inactivity (~30–60 s first
+  request). Subsequent requests respond within the documented deadline.
+- Overlapping solar reductions use the most restrictive factor applied once to
+  original solar (not multiplied). This convention does not affect any public
+  sample and is documented in the optimizer section.
+- The 28-second API deadline is a hard guard. Complex scenarios with slow
+  providers and solver work may approach this limit.
 
 
 Latest live verification: see `LIVE_TEST_RESULTS.md`. The deployed API at
