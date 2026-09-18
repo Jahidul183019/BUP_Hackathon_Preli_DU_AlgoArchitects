@@ -1,7 +1,7 @@
 # GridWise live API verification
 
-Completed: 2026-09-18 13:58 UTC (19:58 Asia/Dhaka).
-Executed locally before deployment, using real provider calls and the complete API.
+Completed: 2026-09-18 14:10 UTC (20:10 Asia/Dhaka).
+Includes both local and deployed Render verification with real provider calls.
 No keys or raw provider error bodies are included in this report.
 
 ## Final configuration
@@ -12,7 +12,22 @@ No keys or raw provider error bodies are included in this report.
 - Solver limit: 10 seconds. Overall API deadline: 28 seconds.
 - Credentials are stored only in ignored `.env`, with owner-only permissions (0600).
 
-## Final results
+## Deployed API verification (Render)
+
+| Check | Result | Observed p95 | Maximum |
+|---|---|---:|---:|
+| All 10 public cases, 2 rounds, deployed Render | 20/20 passed | 5.402 s | 9.165 s |
+| Health endpoint | HTTP 200, `{"status":"ok"}` | — | 0.3 s |
+| Malformed/missing input | HTTP 400 | — | — |
+
+Base URL: `https://bup-hackathon-preli-du-algoarchitects.onrender.com`
+
+Every deployed case returned HTTP 200, matched organizer directive semantics, passed
+independent replay against organizer ground truth, matched reference cost, and
+returned consistent totals and response schema. Equivalent optimal schedules were
+accepted.
+
+## Local verification results
 
 | Check | Result | Observed p95 | Maximum |
 |---|---|---:|---:|
@@ -26,11 +41,7 @@ All five requests completed successfully through Gemini fallback. The 20/20 resu
 therefore describes the combined provider configuration, not Groq alone.
 
 Health returned HTTP 200 with the expected JSON. Malformed JSON and missing fields
-returned HTTP 400. Every passing live case matched organizer directive semantics,
-passed independent replay against organizer ground truth, matched reference cost,
-and returned consistent totals and response schema. Equivalent optimal schedules
-were accepted. Tests ran over localhost HTTP; forced-fallback testing used the full
-ASGI handler with a simulated primary failure and a real Gemini request.
+returned HTTP 400.
 
 ## Issues found and corrected
 
@@ -46,11 +57,10 @@ guaranteed by the final passing run.
 
 ## Scope and remaining work
 
-These are small local samples, not deployment or load-test benchmarks. Gemini is
+These are small local and deployed samples, not load-test benchmarks. Gemini is
 slower than the primary provider. Provider quota/rate limits and latency may vary.
 The default provider order remains `groq,gemini`.
 
-Rotate the credentials pasted into chat before deployment. Configure replacements
-locally or through hosting secrets; never commit `.env`. Build/test/publish the
-Docker image, deploy the service, and rerun the live checks against its public URL.
-No deployment, Git commit, or push was performed as part of this verification.
+Never commit `.env`. Configure credentials through hosting secrets (Render
+environment variables). GitHub Actions CI builds the Docker image and publishes
+to GHCR on main-branch pushes. Render deploys from the same main branch.

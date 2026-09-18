@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/gridwise
+
+jobs:
+  # ── 1. Offline unit and integration tests ──────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run offline test suite
+        run: python -m unittest discover -s tests -v
+
+  # ── 2. Docker build, container smoke test, and image publish ───────────
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t gridwise:ci .
+
+      - name: Start container
+        run: |
+          docker run -d --name gridwise-ci -p 8000:8000 \
+            -e GROQ_API_KEY="" \
+            -e GEMINI_API_KEY="" \
+            gridwise:ci
+
+      - name: Wait for container readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "Container ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Container failed to start"
+          docker logs gridwise-ci
+          exit 1
+
+      - name: Verify health endpoint
+        run: |
+          response=$(curl -sf http://localhost:8000/health)
+          echo "Health: $response"
+          [ "$response" = '{"status":"ok"}' ] || exit 1
+
+      - name: Verify malformed input returns 400
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/optimize-energy \
+            -H 'Content-Type: application/json' \
+            -d '{}')
+          echo "Empty body status: $status"
+          [ "$status" = "400" ] || exit 1
+
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/optimize-energy \
+            -H 'Content-Type: application/json' \
+            -d '{')
+          echo "Malformed JSON status: $status"
+          [ "$status" = "400" ] || exit 1
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f gridwise-ci 2>/dev/null || true
+
+      # Publish image on main branch pushes only
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | head -c 7)
+          docker tag gridwise:ci "$IMAGE_NAME:latest"
+          docker tag gridwise:ci "$IMAGE_NAME:$SHORT_SHA"
+          docker push "$IMAGE_NAME:latest"
+          docker push "$IMAGE_NAME:$SHORT_SHA"
+          echo "Published: $IMAGE_NAME:latest and $IMAGE_NAME:$SHORT_SHA"
+
+  # ── 3. Trigger Render deploy (optional, requires RENDER_DEPLOY_HOOK) ──
+  deploy:
+    needs: docker
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Render deploy hook
+        if: ${{ vars.RENDER_DEPLOY_HOOK != '' }}
+        run: |
+          curl -sf "${{ vars.RENDER_DEPLOY_HOOK }}" || echo "Deploy hook failed (non-blocking)"
+          echo "Deploy hook triggered"

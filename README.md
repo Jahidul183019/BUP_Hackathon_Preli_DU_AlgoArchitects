@@ -1,5 +1,9 @@
 # GridWise API
 
+[![CI](https://github.com/Jahidul183019/BUP_Hackathon_Preli_DU_AlgoArchitects/actions/workflows/ci.yml/badge.svg)](https://github.com/Jahidul183019/BUP_Hackathon_Preli_DU_AlgoArchitects/actions/workflows/ci.yml)
+
+**Live API**: https://bup-hackathon-preli-du-algoarchitects.onrender.com
+
 Python 3.12 + FastAPI. `POST /optimize-energy` runs the real pipeline:
 LLM interpretation -> deterministic guardrails -> joint 24-hour LP optimization
 -> independent final replay -> schema-validated JSON response.
@@ -48,6 +52,47 @@ docker run --rm -p 8000:8000 --env-file .env gridwise:local
 
 The container listens on `0.0.0.0:8000`. This creates a local image only;
 publishing a registry image and deployment are separate steps.
+
+## Deployed API
+
+The API is deployed on [Render](https://render.com) at:
+
+```
+https://bup-hackathon-preli-du-algoarchitects.onrender.com
+```
+
+Test the live deployment:
+
+```sh
+curl -i https://bup-hackathon-preli-du-algoarchitects.onrender.com/health
+curl -i -X POST https://bup-hackathon-preli-du-algoarchitects.onrender.com/optimize-energy \
+  -H 'Content-Type: application/json' \
+  --data-binary @examples/request.json
+```
+
+Interactive API documentation: https://bup-hackathon-preli-du-algoarchitects.onrender.com/docs
+
+Run the full 10-case live verification against the deployment:
+
+```sh
+python3 -m examples.check_live_api --base-url https://bup-hackathon-preli-du-algoarchitects.onrender.com --rounds 2
+```
+
+Render deploys automatically from the `main` branch. Credentials are configured
+through Render environment variables, never committed.
+
+## CI/CD (GitHub Actions)
+
+Every push to `main` and every pull request triggers the CI pipeline
+(`.github/workflows/ci.yml`):
+
+1. **Test**: installs dependencies and runs the full offline test suite.
+2. **Docker**: builds the image, starts a container, verifies `/health` returns
+   `{"status":"ok"}` and malformed input returns HTTP 400.
+3. **Publish**: on `main` pushes, tags and pushes the image to
+   `ghcr.io/jahidul183019/gridwise:latest` and `ghcr.io/jahidul183019/gridwise:<sha>`.
+4. **Deploy**: optionally triggers a Render deploy hook (set `RENDER_DEPLOY_HOOK`
+   as a repository variable if using hook-based deploys).
 
 ## Extension points
 
@@ -267,7 +312,8 @@ the server with `LLM_PROVIDER_ORDER=gemini`; similarly use `groq` for Groq alone
 Offline tests simulate primary failures to exercise fallback without spending quota.
 
 
-Latest live verification: see `LIVE_TEST_RESULTS.md`. The final local runs passed
-20/20 primary-configuration requests, 10/10 Gemini-only requests, and one forced
-primary failure with a real Gemini fallback. These are local test results, not
-a deployment availability guarantee.
+Latest live verification: see `LIVE_TEST_RESULTS.md`. The deployed API at
+https://bup-hackathon-preli-du-algoarchitects.onrender.com passed 20/20 cases
+across 2 rounds with p95=5.4s. Local tests passed 20/20 primary-configuration
+requests, 10/10 Gemini-only requests, and one forced primary failure with a real
+Gemini fallback. CI/CD runs on every push via GitHub Actions.
