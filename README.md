@@ -265,3 +265,9 @@ It does not print raw error bodies. The 10-case p95 is only a small-sample estim
 use repeated rounds to assess stability. To verify Gemini independently, start
 the server with `LLM_PROVIDER_ORDER=gemini`; similarly use `groq` for Groq alone.
 Offline tests simulate primary failures to exercise fallback without spending quota.
+
+
+Latest live verification: see `LIVE_TEST_RESULTS.md`. The final local runs passed
+20/20 primary-configuration requests, 10/10 Gemini-only requests, and one forced
+primary failure with a real Gemini fallback. These are local test results, not
+a deployment availability guarantee.
