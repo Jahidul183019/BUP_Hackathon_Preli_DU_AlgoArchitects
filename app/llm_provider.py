@@ -52,7 +52,15 @@ def _check_content(raw: str, user_json: str) -> None:
     # must trigger the next provider too. Local import avoids a module cycle.
     from .llm_interpreter import DirectiveFallback, _reject_duplicate_keys, validate_directives
     context = json.loads(user_json)
-    parsed = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
+    text = raw.strip() if isinstance(raw, str) else ""
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    parsed = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
     checked = validate_directives(parsed, note_count=len(context["operator_notes"]), capacity_kwh=context["capacity_kwh"])
     if any(isinstance(entry, DirectiveFallback) for entry in checked):
         raise ValueError("Invalid provider interpretation")

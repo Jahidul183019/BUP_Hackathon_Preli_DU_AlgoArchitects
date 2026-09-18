@@ -10,7 +10,7 @@ from starlette.exceptions import HTTPException
 
 from .final_validator import final_validator
 from .llm_interpreter import interpret_notes, validate_directives
-from .schedule_optimizer import optimize_schedule
+from .schedule_optimizer import OptimizationError, optimize_schedule
 from .schemas import OptimizeRequest, OptimizeResponse
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,21 @@ def _run_pipeline(request: OptimizeRequest) -> dict:
         directives = validate_directives(
             interpreted, note_count=len(request.operator_notes), capacity_kwh=battery["capacity_kwh"]
         )
-        result = optimize_schedule(hours, battery, directives)
+        try:
+            result = optimize_schedule(hours, battery, directives)
+        except OptimizationError:
+            logger.warning("Directives caused infeasible schedule; falling back to baseline")
+            directives = [
+                {
+                    "note_index": i,
+                    "applies": False,
+                    "directive_type": "no_op",
+                    "structured_adjustment": None,
+                    "explanation": "Conflicting constraints made schedule infeasible; fell back to baseline.",
+                }
+                for i in range(len(request.operator_notes))
+            ]
+            result = optimize_schedule(hours, battery, directives)
         errors = final_validator(result["hourly_plan"], hours, battery, directives)
         if errors:
             # Validator text may contain untrusted input; log only an event code.

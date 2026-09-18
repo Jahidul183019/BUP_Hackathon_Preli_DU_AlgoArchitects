@@ -208,7 +208,15 @@ def interpret_notes(
         # Provider error messages may contain credentials or request data.
         return [_fallback(i, "provider_error") for i in range(len(operator_notes))]
     try:
-        parsed = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
+        text = raw.strip() if isinstance(raw, str) else ""
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        parsed = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
         return validate_directives(parsed, note_count=len(operator_notes), capacity_kwh=capacity_kwh)
     except (TypeError, ValueError, RecursionError):
         # A malformed or semantically invalid model response must not take down
