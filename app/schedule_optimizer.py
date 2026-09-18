@@ -93,7 +93,7 @@ def optimize_schedule(hours: list[dict], battery: dict, directives: list[dict]) 
         # Only discard negative solver noise; retain positive fractional energy.
         if -1e-8 <= value < 0:
             return 0.0
-        return value
+        return value + 0.0  # Normalize IEEE -0.0 to 0.0
 
     hourly_plan = []
     for h in range(24):
@@ -104,7 +104,7 @@ def optimize_schedule(hours: list[dict], battery: dict, directives: list[dict]) 
             "grid_kwh": clean_nonnegative(solved.x[h]),
             "solar_used_kwh": clean_nonnegative(solved.x[24 + h]),
             "battery_action": action,
-            "battery_kwh": abs(delta),
+            "battery_kwh": abs(delta) + 0.0,
             "battery_energy_after_kwh": clean_nonnegative(solved.x[72 + h]),
         })
     # Preserve exact initial value in the serialized terminal field; verify that
