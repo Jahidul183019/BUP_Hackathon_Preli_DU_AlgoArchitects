@@ -150,11 +150,11 @@ mistaken for a complete result. One invalid entry does not invalidate other note
 Unsorted/duplicate/out-of-range hours are rejected; entries themselves are returned
 in note-index order. Duplicate note mappings fall back rather than choosing one.
 
-The configured provider order is Groq then Gemini. Defaults are
-`GROQ_MODEL=openai/gpt-oss-20b` and `GEMINI_MODEL=gemini-3.1-flash-lite`.
-Set `GROQ_API_KEY` and `GEMINI_API_KEY` in the private `.env` or environment.
+The configured provider order is Groq then Gemini, with OpenRouter also supported. Defaults are
+`GROQ_MODEL=openai/gpt-oss-20b`, `GEMINI_MODEL=gemini-3.1-flash-lite`, and `OPENROUTER_MODEL=openai/gpt-4o-mini`.
+Set `GROQ_API_KEY`, `GEMINI_API_KEY`, and optionally `OPENROUTER_API_KEY` in the private `.env` or environment.
 Models are configurable. `LLM_PROVIDER_ORDER=gemini` or `groq` isolates one
-provider for live testing; `groq,gemini` enables fallback.
+provider for live testing; `groq,gemini` or `groq,gemini,openrouter` enables fallback.
 
 The adapter uses [Groq's documented endpoint](https://console.groq.com/docs/openai)
 and [Gemini's compatible endpoint](https://ai.google.dev/gemini-api/docs/openai).
